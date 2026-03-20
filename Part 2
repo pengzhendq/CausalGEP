@@ -1,0 +1,282 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+from typing import Tuple, Dict, Optional
+import logging
+
+class DynamicSEM(nn.Module)
+    
+    def __init__(self, config: dict):
+        super(DynamicSEM, self).__init__()
+        self.config = config
+        self.logger = logging.getLogger(__name__)
+        
+        self.n_snps = config.get('n_snps', )
+        self.env_dim = config.get('env_dim', )
+        self.pheno_dim = config.get('pheno_dim', )
+        self.latent_dim = config.get('latent_dim', )
+        
+        self.beta_g = nn.Parameter(torch.randn(self.n_snps, self.pheno_dim) * 0.01)
+        
+        self.beta_e = nn.Linear(self.env_dim, self.pheno_dim)
+        
+        self.beta_ge = nn.Linear(self.latent_dim, self.pheno_dim)
+        
+        self.environment_encoder = EnvironmentEncoder(
+            input_dim=config.get('env_input_dim',),
+            hidden_dim= ,
+            output_dim=self.env_dim
+        )
+        
+        self.interaction_module = GeneEnvironmentInteraction(
+            gene_dim=self.n_snps,
+            env_dim=self.env_dim,
+            latent_dim=self.latent_dim
+        )
+        
+        self._init_parameters()
+    
+    def _init_parameters(self):
+        nn.init.xavier_uniform_(self.beta_g)
+        nn.init.zeros_(self.beta_e.bias)
+        nn.init.zeros_(self.beta_ge.bias)
+    
+    def forward(self, genotype: torch.Tensor, 
+                environment: torch.Tensor,
+                return_components: bool = False) -> torch.Tensor:
+        """
+        
+        Args:
+            genotype:  (batch_size x n_snps)
+            environment:  (batch_size x time_steps x env_features)
+            return_components:
+            
+        Returns:
+        """
+        batch_size = genotype.size(0)
+        
+        env_features = self.environment_encoder(environment)  # (batch_size x env_dim)
+       
+        gen_effect = genotype @ self.beta_g  # (batch_size x pheno_dim)
+       
+        env_effect = self.beta_e(env_features)  # (batch_size x pheno_dim)
+
+        interaction = self.interaction_module(genotype, env_features)
+        interaction_effect = self.beta_ge(interaction)  # (batch_size x pheno_dim)
+        
+        phenotype_pred = gen_effect + env_effect + interaction_effect
+        
+        if return_components:
+            return {
+                'prediction': phenotype_pred,
+                'gen_effect': gen_effect,
+                'env_effect': env_effect,
+                'interaction_effect': interaction_effect,
+                'env_features': env_features
+            }
+        
+        return phenotype_pred
+    
+    def compute_regularization_loss(self) -> torch.Tensor:
+        """
+    
+        Returns:
+            
+        """
+        group_sparsity = torch.sum(torch.sqrt(torch.sum(self.beta_g**2, dim=1)))
+
+        l2_reg = torch.sum(self.beta_g**2) + torch.sum(self.beta_e.weight**2)
+        
+        return self.config.get('lambda_group', 0.01) * group_sparsity + \
+               self.config.get('lambda_l2', 0.001) * l2_reg
+
+class EnvironmentEncoder(nn.Module):
+    """TCN"""
+    
+    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int):
+        super(EnvironmentEncoder, self).__init__()
+        
+        self.tcn = nn.Sequential(
+            nn.Conv1d(input_dim, hidden_dim, kernel_size=3, padding=1, dilation=1),
+            nn.ReLU(),
+            nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=2, dilation=2),
+            nn.ReLU(),
+            nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=4, dilation=4),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool1d(1)
+        )
+
+        self.fc = nn.Linear(hidden_dim, output_dim)
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (batch_size x time_steps x features)
+        x = x.transpose(1, 2)  # (batch_size x features x time_steps)
+        x = self.tcn(x).squeeze(-1)  # (batch_size x hidden_dim)
+        x = self.fc(x)  # (batch_size x output_dim)
+        return x
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math
+from typing import Tuple, Optional
+
+class CrossAttention(nn.Module):
+    """Cross-Attention"""
+    
+    def __init__(self, gene_dim: int, env_dim: int, 
+                 hidden_dim: int = 64, num_heads: int = ):
+        super(CrossAttention, self).__init__()
+        
+        self.gene_dim = gene_dim
+        self.env_dim = env_dim
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.head_dim = hidden_dim // num_heads
+     
+        self.gene_proj = nn.Linear(gene_dim, hidden_dim)
+        self.env_key_proj = nn.Linear(env_dim, hidden_dim)
+        self.env_value_proj = nn.Linear(env_dim, hidden_dim)
+
+        self.output_proj = nn.Linear(hidden_dim, hidden_dim)
+
+        self.threshold_detector = ThresholdDetector(hidden_dim)
+        
+    def forward(self, gene_features: torch.Tensor, 
+                env_features: torch.Tensor,
+                env_sequence: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+   
+        
+        Args:
+            gene_features: 
+            env_features: 
+            env_sequence: 
+            
+        Returns:
+            interaction: 
+            attention_weights: 
+        """
+        batch_size = gene_features.size(0)
+        
+        Q = self.gene_proj(gene_features)  
+        K = self.env_key_proj(env_features)  
+        V = self.env_value_proj(env_features) 
+
+        Q = Q.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        K = K.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        V = V.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
+
+        scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.head_dim)
+        attention_weights = F.softmax(scores, dim=-1)
+   
+        context = torch.matmul(attention_weights, V)
+        context = context.transpose(1, 2).contiguous().view(batch_size, -1, self.hidden_dim)
+    
+        interaction = self.output_proj(context.mean(dim=1))
+        
+        if env_sequence is not None:
+            threshold_info = self.threshold_detector(interaction, env_sequence)
+            return interaction, attention_weights, threshold_info
+        
+        return interaction, attention_weights
+
+class GeneEnvironmentInteraction(nn.Module):
+    
+    def __init__(self, gene_dim: int, env_dim: int, latent_dim: int = 512):
+        super(GeneEnvironmentInteraction, self).__init__()
+        
+        self.cross_attention = CrossAttention(gene_dim, env_dim)
+
+        self.fusion = nn.Sequential(
+            nn.Linear(gene_dim + env_dim + 64, latent_dim),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(latent_dim, latent_dim)
+        )
+        
+    def forward(self, genotype: torch.Tensor, 
+                env_features: torch.Tensor) -> torch.Tensor:
+        
+        Args:
+            genotype: 
+            env_features: 
+            
+        Returns:
+
+        interaction, attention_weights = self.cross_attention(genotype, env_features)
+
+        combined = torch.cat([genotype, env_features, interaction], dim=-1)
+        
+        fused_features = self.fusion(combined)
+        
+        return fused_features
+
+class ThresholdDetector(nn.Module):
+    
+    def __init__(self, hidden_dim: int):
+        super(ThresholdDetector, self).__init__()
+        
+        self.threshold_predictor = nn.Sequential(
+            nn.Linear(hidden_dim, ),
+            nn.ReLU(),
+            nn.Linear(128, ),
+            nn.ReLU(),
+            nn.Linear( , ),
+            nn.Sigmoid()
+        )
+        
+    def forward(self, interaction_features: torch.Tensor,
+      
+        
+        Args:
+            interaction_features: 
+            env_sequence: 
+            
+        Returns:
+           
+        batch_size, seq_len, _ = env_sequence.shape
+      
+        activation_probs = self.threshold_predictor(interaction_features.unsqueeze(1).expand(-1, seq_len, -1))
+      
+        threshold = 0.5
+        above_threshold = (activation_probs > threshold).float()
+    
+        threshold_info = {
+            'activation_probs': activation_probs,
+            'above_threshold': above_threshold,
+            'consecutive_days': self._find_consecutive(above_threshold)
+        }
+        
+        return threshold_info
+    
+    def _find_consecutive(self, binary_seq: torch.Tensor, min_length: int = 5) -> torch.Tensor:
+       
+        Args:
+            binary_seq: 
+            min_length: 
+            
+        Returns:
+           
+        batch_size, seq_len = binary_seq.shape[:2]
+        
+        runs = []
+        for i in range(batch_size):
+            seq = binary_seq[i].squeeze()
+            current_run = 0
+            run_mask = torch.zeros_like(seq)
+            
+            for j in range(seq_len):
+                if seq[j] > 0.5:
+                    current_run += 1
+                else:
+                    if current_run >= min_length:
+                        run_mask[j-current_run:j] = 1
+                    current_run = 0
+          
+            if current_run >= min_length:
+                run_mask[seq_len-current_run:seq_len] = 1
+            
+            runs.append(run_mask.unsqueeze(0))
+        
+        return torch.cat(runs, dim=0)
