@@ -82,8 +82,6 @@ class MultimodalDataLoader:
         n_genes = 
     
     def integrate_multimodal_data(self) -> Dict[str, np.ndarray]:
-        """
-        集成多模态数据
         
         Returns:
     
@@ -113,3 +111,340 @@ class MultimodalDataLoader:
         
         self.logger.info("")
         return integrated_data
+
+import logging
+from scipy import stats
+
+class QualityControl:
+    
+    def __init__(self, config: dict):
+        self.config = config
+        self.logger = logging.getLogger(__name__)
+    
+    def adapter_contamination_qc(self, fastq_data: Dict) -> Tuple[np.ndarray, float]:
+        """     
+        Args:
+            fastq_data: 
+            
+        Returns:
+            clean_reads: 
+            contamination_rate:
+        """
+        self.logger.info("...")
+        
+        adapter_sequences = ['AGATCGGAAGAGC', 'CTGTCTCTTATAC']
+ 
+        reads = fastq_data.get('reads', [])
+        total_reads = len(reads)
+        
+        if total_reads == 0:
+            return np.array([]), 0.0
+        
+        clean_indices = np.where(adapter_counts == 0)[0]
+        clean_reads = reads[clean_indices] if len(reads) > 0 else np.array([])
+        
+        self.logger.info(f": ")
+        
+        return clean_reads, contamination_rate
+    
+    def phred_quality_qc(self, quality_scores: np.ndarray, 
+                        min_quality: int = 20) -> Tuple[np.ndarray, float]:
+        """
+        
+        Args:
+            quality_scores: 
+            min_quality: 
+            
+        Returns:
+            filtered_scores: 
+            pass_rate: 
+        """
+        self.logger.info("...")
+        
+        if len(quality_scores) == :
+            return np.array([]), 
+ 
+        if quality_scores.ndim == :
+            mean_quality = np.mean(quality_scores, axis=0)
+        else:
+            mean_quality = quality_scores
+
+        quality_mask = mean_quality >= min_quality
+        filtered_scores = quality_scores[:, quality_mask] if quality_scores.ndim == 2 else quality_scores[quality_mask]
+        
+        pass_rate = np.mean(quality_mask)
+        
+        self.logger.info(f"Phred")
+        
+        return filtered_scores, pass_rate
+    
+    def gc_content_qc(self, sequences: np.ndarray, 
+                     gc_range: Tuple[float, float] = (40, 60)) -> Tuple[np.ndarray, float]:
+        
+        Args:
+            sequences: 
+            gc_range: 
+            
+        Returns:
+            filtered_seqs: 
+            gc_content: 
+        """
+        self.logger.info("...")
+        
+        if len(sequences) == 0:
+            return np.array([]), 0.0
+
+        def calculate_gc(seq):
+            if isinstance(seq, str):
+                gc_count = seq.count('G') + seq.count('C')
+                return gc_count / len(seq) * 100
+            return 0.0
+        
+        gc_contents = np.array([calculate_gc(seq) for seq in sequences])
+ 
+        gc_mask = (gc_contents >= gc_range[0]) & (gc_contents <= gc_range[1])
+        filtered_seqs = sequences[gc_mask]
+        mean_gc = np.mean(gc_contents[gc_mask]) if np.any(gc_mask) else 0.0
+        
+        self.logger.info(f"")
+        
+        return filtered_seqs, mean_gc
+    
+    def statistical_summary_qc(self, data_matrix: np.ndarray,
+                            outlier_sd: float = 3.0) -> Dict:
+        """
+        
+        Args:
+            data_matrix: 
+            outlier_sd: 
+            
+        Returns:
+            summary_dict: 
+        """
+        self.logger.info("...")
+        
+        summary = {
+            'n_samples': data_matrix.shape[0] if data_matrix.ndim > 0 else 1,
+            'n_features': data_matrix.shape[1] if data_matrix.ndim > 1 else 1,
+            'mean': np.nanmean(data_matrix),
+            'std': np.nanstd(data_matrix),
+            'min': np.nanmin(data_matrix),
+            'max': np.nanmax(data_matrix),
+            'missing_rate': np.mean(np.isnan(data_matrix))
+        }
+
+        if data_matrix.size > 0:
+            z_scores = np.abs(stats.zscore(data_matrix, nan_policy='omit'))
+            outlier_mask = z_scores > outlier_sd
+            summary['outlier_rate'] = np.mean(outlier_mask)
+        else:
+            summary['outlier_rate'] = 0.0
+        
+        self.logger.info(f"}
+        
+        return summary
+    
+    def run_full_qc_pipeline(self, multimodal_data: Dict) -> Dict:
+        Args:
+            multimodal_data: 
+            
+        Returns:
+        """
+        self.logger.info("...")
+        
+        qc_report = {
+            'adapter_contamination': {},
+            'phred_quality': {},
+            'gc_content': {},
+            'statistical_summary': {}
+        }
+
+        cleaned_data = {}
+
+        if 'genotype' in multimodal_data:
+            geno_data = multimodal_data['genotype']['snp_matrix']
+            qc_report['statistical_summary']['genotype'] = self.statistical_summary_qc(geno_data)
+        
+            cleaned_data['genotype'] = geno_data
+
+        if 'environment' in multimodal_data:
+            env_data = multimodal_data['environment']['env_matrix']
+            qc_report['statistical_summary']['environment'] = self.statistical_summary_qc(env_data)
+            cleaned_data['environment'] = env_data
+        if 'phenotype' in multimodal_data:
+            pheno_data = multimodal_data['phenotype']['pheno_matrix']
+            qc_report['statistical_summary']['phenotype'] = self.statistical_summary_qc(pheno_data)
+            cleaned_data['phenotype'] = pheno_data
+        
+        if 'transcriptome' in multimodal_data:
+            expr_data = multimodal_data['transcriptome']['expression_matrix']
+            qc_report['statistical_summary']['transcriptome'] = self.statistical_summary_qc(expr_data)
+            cleaned_data['transcriptome'] = expr_data
+        
+        self.logger.info("")
+        
+        return {
+            'cleaned_data': cleaned_data,
+            'qc_report': qc_report
+        }
+
+import logging
+from tqdm import tqdm
+
+class EQTL_Analyzer:
+    
+    def __init__(self, config: dict):
+        self.config = config
+        self.logger = logging.getLogger(__name__)
+    
+    def linear_regression_eqtl(self, genotypes: np.ndarray, 
+                             expressions: np.ndarray,
+                             covariates: np.ndarray = None) -> Tuple[np.ndarray, np.ndarray]:
+        Args:
+            genotypes: 
+            expressions: 
+            covariates: 
+            
+        Returns:
+            p_values:  (n_snps x n_genes)
+            effect_sizes: 
+        """
+        self.logger.info("...")
+        
+        n_samples, n_snps = genotypes.shape
+        _, n_genes = expressions.shape
+        
+        p_values = np.ones((n_snps, n_genes))
+        effect_sizes = np.zeros((n_snps, n_genes))
+       
+        if covariates is not None:
+            X_design = np.column_stack([np.ones(n_samples), covariates])
+        else:
+            X_design = np.ones((n_samples, 1))
+        
+        for i in tqdm(range(n_snps), desc=""):
+            snp = genotypes[:, i]
+            
+            for j in range(n_genes):
+                gene_expr = expressions[:, j]
+
+                X = np.column_stack([X_design, snp])
+                
+                try:
+                    beta = np.linalg.lstsq(X, gene_expr, rcond=None)[0]
+                    residuals =
+                    mse = 
+                    var_beta =
+                    t_stat =
+                    p_val = 
+                    p_values[i, j] =
+                    effect_sizes[i, j] = 
+                    
+                except np.linalg.LinAlgError:
+                    continue
+        
+        self.logger.info(f"eQTL over: {n_snps} SNPs, {n_genes} ")
+        
+        return p_values, effect_sizes
+    
+    def identify_significant_eqtls(self, p_values: np.ndarray, 
+                                 effect_sizes: np.ndarray,
+                                 fdr_threshold: float = 0.05) -> pd.DataFrame:
+        Args:
+            p_values:
+            effect_sizes: 
+            fdr_threshold: FDR
+            
+        Returns:
+        self.logger.info("eQTL...")
+
+        from statsmodels.stats.multitest import fdrcorrection
+        
+        flat_pvals = p_values.flatten()
+        _, fdr_corrected = fdrcorrection(flat_pvals, alpha=fdr_threshold)
+        
+        significant_mask = fdr_corrected.reshape(p_values.shape)
+        sig_indices = np.where(significant_mask)
+        
+        results = []
+        for snp_idx, gene_idx in zip(*sig_indices):
+            results.append({
+                'snp_index': snp_idx,
+                'gene_index': gene_idx,
+                'p_value': p_values[snp_idx, gene_idx],
+                'effect_size': effect_sizes[snp_idx, gene_idx],
+                'fdr_adjusted': fdr_corrected[snp_idx * p_values.shape[1] + gene_idx]
+            })
+        
+        results_df = pd.DataFrame(results)
+        
+        self.logger.info(f" {len(results_df)} eQTL (FDR < {fdr_threshold})")
+        
+        return results_df
+    
+    def build_genotype_expression_network(self, eqtl_results: pd.DataFrame,
+                                        snp_ids: List[str],
+                                        gene_ids: List[str]) -> Dict:
+
+        Args:
+            eqtl_results:
+            snp_ids: SNP ID
+            gene_ids: 
+            
+        Returns:
+        
+        self.logger.info("Net...")
+        
+        network = {
+            'nodes': [],
+            'edges': [],
+            'adjacency_matrix': None
+        }
+    
+        for snp_id in snp_ids:
+            network['nodes'].append({
+                'id': snp_id,
+                'type': 'snp',
+                'degree': 0
+            })
+        
+        for gene_id in gene_ids:
+            network['nodes'].append({
+                'id': gene_id,
+                'type': 'gene',
+                'degree': 0
+            })
+     
+        edges = []
+        for _, row in eqtl_results.iterrows():
+            snp_id = snp_ids[int(row['snp_index'])]
+            gene_id = gene_ids[int(row['gene_index'])]
+            
+            edge = {
+                'source': snp_id,
+                'target': gene_id,
+                'weight': row['effect_size'],
+                'p_value': row['p_value']
+            }
+            edges.append(edge)
+          
+            for node in network['nodes']:
+                if node['id'] == snp_id or node['id'] == gene_id:
+                    node['degree'] += 1
+        
+        network['edges'] = edges
+      
+        n_total = len(snp_ids) + len(gene_ids)
+        adj_matrix = np.zeros((n_total, n_total))
+        
+        for edge in edges:
+            src_idx = snp_ids.index(edge['source']) if edge['source'] in snp_ids else len(snp_ids) + gene_ids.index(edge['source'])
+            tgt_idx = snp_ids.index(edge['target']) if edge['target'] in snp_ids else len(snp_ids) + gene_ids.index(edge['target'])
+            adj_matrix[src_idx, tgt_idx] = edge['weight']
+            adj_matrix[tgt_idx, src_idx] = edge['weight']
+        
+        network['adjacency_matrix'] = adj_matrix
+        
+        self.logger.info(f" ")
+        
+        return network
