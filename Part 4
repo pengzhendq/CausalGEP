@@ -1,0 +1,516 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+from typing import Tuple, Dict, Optional
+import logging
+from typing import List, Tuple, Dict, Optional
+from dataclasses import dataclass
+
+class DoubleMachineLearning(nn.Module):
+   
+    def __init__(self, config: dict):
+        super(DoubleMachineLearning, self).__init__()
+        self.config = config
+        self.logger = logging.getLogger(__name__)
+        
+        self.treatment_dim = config.get('treatment_dim',  )
+        self.covariate_dim = config.get('covariate_dim',  )
+        self.outcome_dim = config.get('outcome_dim',  )
+    
+        self.propensity_network = PropensityNetwork(
+            covariate_dim=self.covariate_dim,
+            treatment_dim=self.treatment_dim
+        )
+     
+        self.outcome_network = OutcomeNetwork(
+            covariate_dim=self.covariate_dim,
+            treatment_dim=self.treatment_dim,
+            outcome_dim=self.outcome_dim
+        )
+        
+    def forward(self, treatment: torch.Tensor,
+                covariates: torch.Tensor,
+                outcome: torch.Tensor) -> Dict:
+       
+        Args:
+            treatment: 
+            covariates: 
+            outcome: 
+            
+        Returns:
+        propensity_scores = self.propensity_network(covariates, treatment)
+        outcome_pred = self.outcome_network(covariates, treatment)
+
+        ace = self.compute_doubly_robust_estimate(
+            treatment, covariates, outcome, 
+            propensity_scores, outcome_pred
+        )
+        
+        return {
+            'propensity_scores': propensity_scores,
+            'outcome_pred': outcome_pred,
+            'ace': ace
+        }
+    
+    def compute_doubly_robust_estimate(self, 
+                                      treatment: torch.Tensor,
+                                      covariates: torch.Tensor,
+                                      outcome: torch.Tensor,
+                                      propensity_scores: torch.Tensor,
+                                      outcome_pred: torch.Tensor) -> torch.Tensor:
+       
+        Args:
+            treatment: 
+            covariates: 
+            outcome: 
+            propensity_scores:
+            outcome_pred: 
+            
+        Returns:
+         
+        n = treatment.size(0)
+      
+        residuals = outcome - outcome_pred
+        
+        eps = 
+        propensity_weights = treatment / (propensity_scores + eps) - \
+                            (1 - treatment) / (1 - propensity_scores + eps)
+   
+        dr_estimates = outcome_pred + propensity_weights * residuals
+       
+        treatment_1 = torch.ones_like(treatment)
+        treatment_0 = torch.zeros_like(treatment)
+        
+        outcome_pred_1 = self.outcome_network(covariates, treatment_1)
+        outcome_pred_0 = self.outcome_network(covariates, treatment_0)
+      
+        model_difference = outcome_pred_1 - outcome_pred_0
+        
+        ace = 0.5 * (dr_estimates.mean() + model_difference.mean())
+        
+        return ace
+    
+    def compute_ate(self, treatment: torch.Tensor,
+                   covariates: torch.Tensor,
+                   outcome: torch.Tensor,
+                   bootstrap_samples: int = ) -> Dict:
+            
+        Returns:
+        n = treatment.size(0)
+        ate_estimates = []
+    
+        for _ in range(bootstrap_samples):
+            indices = torch.randint(0, n, (n,))
+            treatment_boot = treatment[indices]
+            covariates_boot = covariates[indices]
+            outcome_boot = outcome[indices]
+          
+            with torch.no_grad():
+                result = self.forward(treatment_boot, covariates_boot, outcome_boot)
+                ate_estimates.append(result['ace'].item())
+        
+        ate_estimates = np.array(ate_estimates)
+     
+        ate_mean = np.mean(ate_estimates)
+        ate_std = np.std(ate_estimates)
+        
+        # 95%\
+        ci_lower = np.percentile(ate_estimates, 2.5)
+        ci_upper = np.percentile(ate_estimates, 97.5)
+        
+        return {
+            'ate_mean': ate_mean,
+            'ate_std': ate_std,
+            'ci_95_lower': ci_lower,
+            'ci_95_upper': ci_upper,
+            'ate_distribution': ate_estimates
+        }
+
+class PropensityNetwork(nn.Module):
+  
+    def __init__(self, covariate_dim: int, treatment_dim: int):
+        super(PropensityNetwork, self).__init__()
+        
+        self.network = nn.Sequential(
+            nn.Linear(covariate_dim + treatment_dim,  ),
+            nn.ReLU(),
+            nn.Dropout( ),
+            nn.Linear( , ),
+            nn.ReLU(),
+            nn.Dropout( ),
+            nn.Linear(,),
+            nn.Sigmoid()
+        )
+        
+    def forward(self, covariates: torch.Tensor,
+                treatment: torch.Tensor) -> torch.Tensor:
+       
+        features = torch.cat([covariates, treatment], dim=-1)
+        propensity = self.network(features)
+        
+        return propensity
+
+class OutcomeNetwork(nn.Module):
+ 
+    def __init__(self, covariate_dim: int, 
+                 treatment_dim: int, 
+                 outcome_dim: int = 1):
+        super(OutcomeNetwork, self).__init__()
+        
+        self.network = nn.Sequential(
+            nn.Linear(covariate_dim + treatment_dim, ),
+            nn.ReLU(),
+            nn.Dropout( ),
+            nn.Linear(,),
+            nn.ReLU(),
+            nn.Dropout( ),
+            nn.Linear(,),
+            nn.ReLU(),
+            nn.Dropout( ),
+            nn.Linear( , outcome_dim)
+        )
+        
+    def forward(self, covariates: torch.Tensor,
+                treatment: torch.Tensor) -> torch.Tensor:
+        features = torch.cat([covariates, treatment], dim=-1)
+      
+        outcome = self.network(features)
+        
+        return outcome
+
+class InterventionStrategy:
+    gene_edits: Dict[str, float] 
+    env_controls: Dict[str, float]
+    predicted_effects: Dict[str, float]
+    objectives: List[float]
+    
+    def __str__(self):
+        return f"Gene Edits: {self.gene_edits}, " \
+               f"Env Controls: {self.env_controls}, " \
+               f"Predicted Effects: {self.predicted_effects}"
+
+class NSGA2Optimizer:
+  
+    def __init__(self, config: dict, causal_model: nn.Module):
+        self.config = config
+        self.causal_model = causal_model
+        self.logger = logging.getLogger(__name__)
+     
+        self.population_size = config.get('population_size',  )
+        self.generations = config.get('generations',  )
+        self.crossover_rate = config.get('crossover_rate',  )
+        self.mutation_rate = config.get('mutation_rate',  )
+        
+        # 目标权重
+        self.objective_weights = config.get('objective_weights', [ , , ])
+        
+    def optimize(self, baseline_data: Dict, 
+                 target_objectives: List[str]) -> List[InterventionStrategy]:
+     
+        Args:
+            baseline_data: 
+            target_objectives: 
+            
+        Returns:
+        population = self._initialize_population(baseline_data)
+      
+        for gen in range(self.generations):
+            self.logger.info(f"Generation {gen+1}/{self.generations}")
+        
+            evaluated_pop = self._evaluate_population(population, baseline_data)
+            
+            fronts = self._fast_non_dominated_sort(evaluated_pop)
+          
+            self._calculate_crowding_distance(fronts)
+           
+            parents = self._selection(fronts)
+           
+            offspring = self._crossover_and_mutation(parents)
+            
+            population = self._merge_populations(evaluated_pop, offspring)
+         
+            population = self._environmental_selection(population)
+        
+        pareto_front = self._get_pareto_front(population)
+        
+        return pareto_front
+    
+    def _initialize_population(self, baseline_data: Dict) -> List[Dict]:
+        population = []
+        
+        for _ in range(self.population_size):
+            strategy = {
+                'gene_edits': self._random_gene_edits(),
+                'env_controls': self._random_env_controls(),
+                'objectives': None
+            }
+            population.append(strategy)
+        
+        return population
+    
+    def _random_gene_edits(self) -> Dict[str, float]:
+        candidate_genes = […]
+        n_edits = np.random.randint( , )
+        
+        selected_genes = np.random.choice(candidate_genes, n_edits, replace=False)
+        edits = {gene: np.random.uniform( , ) for gene in selected_genes}
+        
+        return edits
+    
+    def _random_env_controls(self) -> Dict[str, float]:
+        env_vars = ['irrigation', 'fertilizer', 'temperature_control']
+        controls = {}
+        
+        for var in env_vars:
+            if np.random.random() < 0.5: 
+                if var == 'irrigation':
+                    controls[var] = np.random.uniform(-0.3, 0.3)  # -30% - +30%
+                elif var == 'fertilizer':
+                    controls[var] = np.random.uniform(-0.2, 0.2)
+                elif var == 'temperature_control':
+                    controls[var] = np.random.uniform(-2, 2)  # -2°C - +2°C
+        
+        return controls
+    
+    def _evaluate_population(self, population: List[Dict], 
+                            baseline_data: Dict) -> List[Dict]:
+        evaluated_pop = []
+        
+        for individual in population:
+            effects = self._simulate_intervention(individual, baseline_data)
+            objectives = self._compute_objectives(effects, baseline_data)
+            
+            individual['predicted_effects'] = effects
+            individual['objectives'] = objectives
+            evaluated_pop.append(individual)
+        
+        return evaluated_pop
+    
+    def _simulate_intervention(self, strategy: Dict, 
+                              baseline_data: Dict) -> Dict[str, float]:
+    def _compute_objectives(self, effects: Dict, 
+                           baseline_data: Dict) -> List[float]:
+        obj1 = effects['yield_change']
+     
+        obj2 = effects['survival_rate_change']
+        
+        obj3 = effects['water_use_efficiency']
+    
+        obj4 = -abs(effects['biomass_change'])
+        
+        return [obj1, obj2, obj3, obj4]
+    
+    def _fast_non_dominated_sort(self, population: List[Dict]) -> List[List[int]]
+        S = [[] for _ in range(len(population))]
+        n = [0] * len(population)
+        rank = [0] * len(population)
+        fronts = [[]]
+      
+        for i, p in enumerate(population):
+            S[i] = []
+            n[i] = 0
+            for j, q in enumerate(population):
+                if i != j:
+                    if self._dominates(p['objectives'], q['objectives']):
+                        S[i].append(j)
+                    elif self._dominates(q['objectives'], p['objectives']):
+                        n[i] += 1
+            if n[i] == 0:
+                rank[i] = 0
+                fronts[0].append(i)
+        
+        i = 0
+        while len(fronts[i]) > 0:
+            Q = []
+            for p in fronts[i]:
+                for q in S[p]:
+                    n[q] -= 1
+                    if n[q] == 0:
+                        rank[q] = i + 1
+                        Q.append(q)
+            i += 1
+            fronts.append(Q)
+        
+        if len(fronts[-1]) == 0:
+            fronts.pop()
+        
+        return fronts
+    
+    def _dominates(self, obj1: List[float], obj2: List[float]) -> bool:
+        
+        not_worse = all(o1 <= o2 for o1, o2 in zip(obj1, obj2))
+        strictly_better = any(o1 < o2 for o1, o2 in zip(obj1, obj2))
+        return not_worse and strictly_better
+    
+    def _calculate_crowding_distance(self, fronts: List[List[int]], 
+                                   population: List[Dict]):
+        for front in fronts:
+            if len(front) == 0:
+                continue
+          
+            for idx in front:
+                population[idx]['crowding_distance'] = 0
+            
+            n_objs = len(population[front[0]]['objectives'])
+            for obj_idx in range(n_objs):
+                front_sorted = sorted(front, 
+                    key=lambda idx: population[idx]['objectives'][obj_idx])
+                
+                population[front_sorted[0]]['crowding_distance'] = float('inf')
+                population[front_sorted[-1]]['crowding_distance'] = float('inf')
+                
+                obj_min = population[front_sorted[0]]['objectives'][obj_idx]
+                obj_max = population[front_sorted[-1]]['objectives'][obj_idx]
+                
+                if abs(obj_max - obj_min) < 1e-10:
+                    continue
+                
+                for i in range(1, len(front_sorted)-1):
+                    idx = front_sorted[i]
+                    prev_obj = population[front_sorted[i-1]]['objectives'][obj_idx]
+                    next_obj = population[front_sorted[i+1]]['objectives'][obj_idx]
+                    
+                    population[idx]['crowding_distance'] += \
+                        (next_obj - prev_obj) / (obj_max - obj_min)
+    
+    def _selection(self, fronts: List[List[int]], 
+                  population: List[Dict]) -> List[int]:
+        selected = []
+        remaining = self.population_size
+        
+        for front in fronts:
+            if len(front) <= remaining:
+                selected.extend(front)
+                remaining -= len(front)
+            else：
+                front_sorted = sorted(front, 
+                    key=lambda idx: population[idx]['crowding_distance'], 
+                    reverse=True)
+                selected.extend(front_sorted[:remaining])
+                break
+        
+        return selected
+    
+    def _crossover_and_mutation(self, parents: List[int], 
+                               population: List[Dict]) -> List[Dict]:
+
+        offspring = []
+        
+        while len(offspring) < self.population_size:
+            parent1_idx = np.random.choice(parents)
+            parent2_idx = np.random.choice(parents)
+            parent1 = population[parent1_idx]
+            parent2 = population[parent2_idx]
+
+            if np.random.random() < self.crossover_rate:
+                child = self._crossover(parent1, parent2)
+            else:
+                child = parent1.copy() if np.random.random() < 0.5 else parent2.copy()
+          
+            if np.random.random() < self.mutation_rate:
+                child = self._mutate(child)
+            
+            offspring.append(child)
+        
+        return offspring
+    
+    def _crossover(self, parent1: Dict, parent2: Dict) -> Dict:
+        child = {'gene_edits': {}, 'env_controls': {}}
+        
+        all_genes = set(parent1['gene_edits'].keys()) | set(parent2['gene_edits'].keys())
+        for gene in all_genes:
+            if gene in parent1['gene_edits'] and gene in parent2['gene_edits']:
+
+                if np.random.random() < 0.5:
+                    child['gene_edits'][gene] = parent1['gene_edits'][gene]
+                else:
+                    child['gene_edits'][gene] = parent2['gene_edits'][gene]
+            elif gene in parent1['gene_edits']:
+                child['gene_edits'][gene] = parent1['gene_edits'][gene]
+            else:
+                child['gene_edits'][gene] = parent2['gene_edits'][gene]
+        
+        all_envs = set(parent1['env_controls'].keys()) | set(parent2['env_controls'].keys())
+        for env in all_envs:
+            if env in parent1['env_controls'] and env in parent2['env_controls']:
+                alpha = np.random.random()
+                child_val = (alpha * parent1['env_controls'][env] + 
+                           (1 - alpha) * parent2['env_controls'][env])
+                child['env_controls'][env] = child_val
+            elif env in parent1['env_controls']:
+                child['env_controls'][env] = parent1['env_controls'][env]
+            else:
+                child['env_controls'][env] = parent2['env_controls'][env]
+        
+        return child
+    
+    def _mutate(self, individual: Dict) -> Dict:
+        mutated = individual.copy()
+        for gene in list(mutated['gene_edits'].keys()):
+            if np.random.random() < 0.1: 
+                mutation = np.random.normal(0, 0.2)
+                mutated['gene_edits'][gene] += mutation
+                mutated['gene_edits'][gene] = np.clip(mutated['gene_edits'][gene], -2.0, 2.0)
+        
+        for env in list(mutated['env_controls'].keys()):
+            if np.random.random() < 0.1:
+                mutation = np.random.normal(0, 0.1)
+                mutated['env_controls'][env] += mutation
+                if env == 'irrigation':
+                    mutated['env_controls'][env] = np.clip(mutated['env_controls'][env], -0.3, 0.3)
+                elif env == 'fertilizer':
+                    mutated['env_controls'][env] = np.clip(mutated['env_controls'][env], -0.2, 0.2)
+                elif env == 'temperature_control':
+                    mutated['env_controls'][env] = np.clip(mutated['env_controls'][env], -2, 2)
+        
+        return mutated
+    
+    def _merge_populations(self, pop1: List[Dict], 
+                          pop2: List[Dict]) -> List[Dict]:
+        return pop1 + pop2
+    
+    def _environmental_selection(self, merged_pop: List[Dict]) -> List[Dict]:
+        fronts = self._fast_non_dominated_sort(merged_pop)
+        self._calculate_crowding_distance(fronts, merged_pop)
+        new_pop = []
+        remaining = self.population_size
+        
+        for front in fronts:
+            if len(front) <= remaining:
+                for idx in front:
+                    new_pop.append(merged_pop[idx])
+                remaining -= len(front)
+            else:
+                front_sorted = sorted(front, 
+                    key=lambda idx: merged_pop[idx]['crowding_distance'], 
+                    reverse=True)
+                for idx in front_sorted[:remaining]:
+                    new_pop.append(merged_pop[idx])
+                break
+        
+        return new_pop
+    
+    def _get_pareto_front(self, population: List[Dict]) -> List[InterventionStrategy]:
+        pareto_indices = []
+        for i, p in enumerate(population):
+            dominated = False
+            for j, q in enumerate(population):
+                if i != j and self._dominates(q['objectives'], p['objectives']):
+                    dominated = True
+                    break
+            if not dominated:
+                pareto_indices.append(i)
+
+        pareto_front = []
+        for idx in pareto_indices:
+            individual = population[idx]
+            strategy = InterventionStrategy(
+                gene_edits=individual['gene_edits'],
+                env_controls=individual['env_controls'],
+                predicted_effects=individual.get('predicted_effects', {}),
+                objectives=individual['objectives']
+            )
+            pareto_front.append(strategy)
+        
+        return pareto_front
