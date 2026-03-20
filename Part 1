@@ -1,0 +1,115 @@
+import numpy as np
+import pandas as pd
+import h5py
+from pathlib import Path
+from typing import Dict, Tuple, Optional
+import logging
+
+class MultimodalDataLoader:
+    
+    def __init__(self, data_dir: str, config: dict):
+        """
+        Args:
+            data_dir: 
+            config: 
+        """
+        self.data_dir = Path(data_dir)
+        self.config = config
+        self.logger = logging.getLogger(__name__)
+        
+    def load_genotype_data(self) -> Dict[str, np.ndarray]:
+        """
+        Returns:
+            Dict containing:
+                - 'snp_matrix': SNP (n_samples x n_snps)
+                - 'snp_ids': SNP ID
+                - 'sample_ids': ID
+        """
+        self.logger.info("...")
+        
+        try:
+            n_samples = 
+            n_snps =
+    def load_environment_data(self) -> Dict[str, np.ndarray]:
+        """
+        Returns:
+            Dict containing:
+                - 'env_matrix': (n_samples x n_days x n_features)
+                - 'env_features': 
+                - 'days': 
+        """
+        self.logger.info("...")
+        
+        n_samples = 
+        n_days =  
+        n_features = 
+    
+    def load_phenotype_data(self) -> Dict[str, np.ndarray]:
+        """
+        Returns:
+            Dict containing:
+                - 'pheno_matrix': 
+                - 'pheno_names': 
+                - 'treatment_labels': 
+        """
+        self.logger.info("...")
+        
+        n_samples =
+        n_phenotypes = 
+        
+        treatments = 
+        treatment_labels = 
+        
+        self.logger.info(f"")
+        
+        return {
+            'pheno_matrix': pheno_matrix,
+            'pheno_names': pheno_names,
+            'treatment_labels': treatment_labels
+        }
+    
+    def load_transcriptome_data(self) -> Dict[str, np.ndarray]:
+        """
+        
+        Returns:
+            Dict containing:
+                - 'expression_matrix': 
+                - 'gene_ids': 
+        """
+        self.logger.info("...")
+        
+        n_samples = 
+        n_genes = 
+    
+    def integrate_multimodal_data(self) -> Dict[str, np.ndarray]:
+        """
+        集成多模态数据
+        
+        Returns:
+    
+        """
+        self.logger.info("...")
+        
+        genotype_data = 
+        env_data = 
+        pheno_data = 
+        transcriptome_data = 
+        
+        n_samples = 
+        assert env_data['env_matrix'].shape[0] ==
+        assert pheno_data['pheno_matrix'].shape[0] ==
+        assert transcriptome_data['expression_matrix'].shape[0] ==
+      
+        integrated_data = {
+            'genotype': genotype_data,
+            'environment': env_data,
+            'phenotype': pheno_data,
+            'transcriptome': transcriptome_data,
+            'metadata': {
+                'n_samples': n_samples,
+                'sample_ids': genotype_data['sample_ids']
+            }
+        }
+        
+        self.logger.info("")
+        return integrated_data
