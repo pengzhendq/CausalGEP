@@ -1,0 +1,316 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+from typing import Tuple, Dict
+
+class SparseAutoencoder(nn.Module):
+    
+    def __init__(self, input_dim: int = , 
+                 latent_dim: int = ,
+                 sparsity_target: float = ):
+        super(SparseAutoencoder, self).__init__()
+        
+        self.input_dim = input_dim
+        self.latent_dim = latent_dim
+        self.sparsity_target = sparsity_target
+
+        self.encoder = nn.Sequential(
+            nn.Linear(input_dim, ),
+            nn.ReLU(),
+            nn.Dropout(),
+            nn.Linear( , ),
+            nn.ReLU(),
+            nn.Dropout( ),
+            nn.Linear( , latent_dim)
+        )
+      
+        self.decoder = nn.Sequential(
+            nn.Linear(latent_dim, ),
+            nn.ReLU(),
+            nn.Dropout(),
+            nn.Linear(,),
+            nn.ReLU(),
+            nn.Dropout( ),
+            nn.Linear( , input_dim)
+        )
+        
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        z = self.encoder(x)
+
+        x_recon = self.decoder(z)
+        
+        return z, x_recon
+    
+    def compute_sparsity_loss(self, z: torch.Tensor) -> torch.Tensor:
+        batch_size = z.size(0)
+       
+        rho_hat = torch.mean(z, dim=0)
+
+        sparsity_loss = torch.sum(
+            self.sparsity_target * torch.log(self.sparsity_target / (rho_hat + 1e-10)) +
+            (1 - self.sparsity_target) * torch.log((1 - self.sparsity_target) / (1 - rho_hat + 1e-10))
+        )
+        
+        return sparsity_loss
+    
+    def compute_reconstruction_loss(self, x: torch.Tensor, 
+                                   x_recon: torch.Tensor) -> torch.Tensor:
+        recon_loss = F.binary_cross_entropy_with_logits(x_recon, x, reduction='mean')
+        return recon_loss
+    
+    def compute_total_loss(self, x: torch.Tensor, 
+                          z: torch.Tensor, 
+                          x_recon: torch.Tensor,
+                          beta: float =  ) -> Dict[str, torch.Tensor]:
+     
+        recon_loss = self.compute_reconstruction_loss(x, x_recon)
+        sparsity_loss = self.compute_sparsity_loss(z)
+        
+        total_loss = recon_loss + beta * sparsity_loss
+        
+        return {
+            'total_loss': total_loss,
+            'recon_loss': recon_loss,
+            'sparsity_loss': sparsity_loss
+        }
+    
+    def get_important_features(self, z: torch.Tensor, 
+                              threshold: float =  ) -> torch.Tensor:
+     
+        feature_importance = torch.mean(torch.abs(z), dim=0)
+        
+        important_mask = feature_importance > threshold
+        
+        return important_mask, feature_importance
+
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math
+import numpy as np
+from typing import Tuple, Optional
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model: int, max_len: int = 5000):
+        super(PositionalEncoding, self).__init__()
+        
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * 
+                           (-math.log(10000.0) / d_model))
+        
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        
+        pe = pe.unsqueeze(0).transpose(0, 1)
+        self.register_buffer('pe', pe)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x + self.pe[:x.size(0), :]
+        return x
+
+class TemporalTransformer(nn.Module):
+  
+    def __init__(self, input_dim: int = , 
+                 d_model: int = ,
+                 nhead: int = ,
+                 num_layers: int = ,
+                 dim_feedforward: int = ,
+                 dropout: float = ):
+        super(TemporalTransformer, self).__init__()
+        
+        self.d_model = d_model
+      
+        self.input_proj = nn.Linear(input_dim, d_model)
+ 
+        self.pos_encoder = PositionalEncoding(d_model)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            batch_first=True
+        )
+        self.transformer_encoder = nn.TransformerEncoder(
+            encoder_layer, 
+            num_layers=num_layers
+        )
+ 
+        self.output_proj = nn.Linear(d_model, d_model)
+ 
+        self.temporal_pooling = TemporalAttentionPooling(d_model)
+        
+    def forward(self, x: torch.Tensor, 
+                mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+ 
+        Args:
+            x:
+            mask: 
+            
+        Returns:
+           
+        batch_size, seq_len, _ = x.shape
+        
+        x = self.input_proj(x) * math.sqrt(self.d_model)
+
+        x = self.pos_encoder(x.transpose(0, 1)).transpose(0, 1)
+
+        memory = self.transformer_encoder(x, src_key_padding_mask=mask)
+
+        pooled_features, attention_weights = self.temporal_pooling(memory)
+
+        output = self.output_proj(pooled_features)
+        
+        return output, attention_weights
+
+class TemporalAttentionPooling(nn.Module):
+    def __init__(self, d_model: int):
+        super(TemporalAttentionPooling, self).__init__()
+        
+        self.attention = nn.Sequential(
+            nn.Linear(d_model, d_model //  ),
+            nn.Tanh(),
+            nn.Linear(d_model //  ,  )
+        )
+        
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        Args:
+            x: 
+            
+        Returns:
+        attention_scores = self.attention(x)  # (batch_size x seq_len x 1)
+        attention_weights = F.softmax(attention_scores, dim=1)
+        
+        pooled_features = torch.sum(attention_weights * x, dim=1)
+        
+        return pooled_features, attention_weights.squeeze(-1)
+
+class CrossModalAttention(nn.Module):
+
+    def __init__(self, gene_dim: int = ,
+                 env_dim: int = ,
+                 hidden_dim: int = ,
+                 num_heads: int = ):
+        super(CrossModalAttention, self).__init__()
+        
+        self.gene_dim = gene_dim
+        self.env_dim = env_dim
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.gene_query_proj = nn.Linear(gene_dim, hidden_dim)
+
+        self.env_key_proj = nn.Linear(env_dim, hidden_dim)
+        self.env_value_proj = nn.Linear(env_dim, hidden_dim)
+        
+        self.multihead_attn = nn.MultiheadAttention(
+            embed_dim=hidden_dim,
+            num_heads=num_heads,
+            dropout=0.1,
+            batch_first=True
+        )
+
+        self.norm1 = nn.LayerNorm(hidden_dim)
+        self.norm2 = nn.LayerNorm(hidden_dim)
+        
+        self.ffn = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim * 4),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim * 4, hidden_dim)
+        )
+
+        self.output_proj = nn.Linear(hidden_dim, hidden_dim)
+        
+    def forward(self, gene_features: torch.Tensor,
+                env_features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+
+        Args:
+            gene_features: 
+            env_features: 
+            
+        Returns:
+
+        batch_size = gene_features.size(0)
+        
+        query = self.gene_query_proj(gene_features).unsqueeze(1)  # (batch_size x 1 x hidden_dim)
+        
+        if env_features.dim() == :
+            env_features = env_features.unsqueeze(1)
+        
+        key = self.env_key_proj(env_features)  # (batch_size x seq_len x hidden_dim)
+        value = self.env_value_proj(env_features)  # (batch_size x seq_len x hidden_dim)
+    
+        attn_output, attn_weights = self.multihead_attn(
+            query=query,
+            key=key,
+            value=value
+        )
+        attn_output = self.norm1(query + attn_output)
+      
+        ffn_output = self.ffn(attn_output)
+      
+        output = self.norm2(attn_output + ffn_output)
+       
+        fused_features = self.output_proj(output).squeeze(1)
+        
+        return fused_features, attn_weights.squeeze(1)
+    
+    def generate_causal_response_map(self, gene_features: torch.Tensor,
+                                    env_features: torch.Tensor,
+                                    gene_ids: list,
+                                    env_labels: list) -> Dict:
+    
+        Args:
+            gene_features: 
+            env_features: 
+            gene_ids:
+            env_labels: 
+            
+        Returns:
+        attn_weights = self.forward(gene_features, env_features)
+        
+        batch_size = gene_features.size(0)
+        response_map = {}
+        
+        for i in range(batch_size):
+            gene_id = gene_ids[i] if i < len(gene_ids) else f"gene_{i}"
+            response_map[gene_id] = {}
+            
+            for j, env_label in enumerate(env_labels):
+                weight = attn_weights[i, j].item()
+                response_map[gene_id][env_label] = weight
+        
+        return response_map
+
+class FeatureFusionNetwork(nn.Module):
+    def __init__(self, gene_dim: int, env_dim: int, 
+                 fusion_dim: int =  ):
+        super(FeatureFusionNetwork, self).__init__()
+ 
+        self.cross_attention = CrossModalAttention(gene_dim, env_dim, fusion_dim)
+     
+        self.fusion_layers = nn.Sequential(
+            nn.Linear(fusion_dim, fusion_dim * 2),
+            nn.ReLU(),
+            nn.Dropout( ),
+            nn.Linear(fusion_dim * 2, fusion_dim),
+            nn.ReLU(),
+            nn.Dropout( ),
+            nn.Linear(fusion_dim, fusion_dim)
+        )
+        
+    def forward(self, gene_features: torch.Tensor,
+                env_features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+       
+        Args:
+            gene_features: 
+            env_features: 
+            
+        Returns:
+        attn_features, attn_weights = self.cross_attention(gene_features, env_features)
+        fused_features = self.fusion_layers(attn_features)
+        
+        return fused_features, attn_weights
